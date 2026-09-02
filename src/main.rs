@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, sync::Arc};
 
 use serenity::{
-    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
+    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Message, Ready},
     async_trait,
     prelude::*,
 };
@@ -44,6 +44,35 @@ impl EventHandler for Handler {
             .create_command(&ctx, commands::leave::register())
             .await
             .unwrap();
+    }
+
+    async fn message(&self, ctx: Context, msg: Message) {
+        if msg.author.bot {
+            return;
+        }
+
+        let Some(guild_id) = msg.guild_id else {
+            return;
+        };
+
+        let state = {
+            let data = ctx.data.read().await;
+            data.get::<BotStateKey>().unwrap().clone()
+        };
+
+        if Some(msg.channel_id) != state.read().await.text_channels.get(&guild_id).copied() {
+            return;
+        }
+
+        let manager = songbird::get(&ctx)
+            .await
+            .expect("Songbird is not registered");
+
+        let Some(call) = manager.get(guild_id) else {
+            return;
+        };
+
+        println!("{}", msg.content);
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
