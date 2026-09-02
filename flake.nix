@@ -30,6 +30,7 @@
         nativeBuildInputs = with pkgs; [
           rust
           taplo
+          cmake
         ];
 
         buildInputs = with pkgs; [

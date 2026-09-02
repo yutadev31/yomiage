@@ -7,7 +7,7 @@ pub fn register() -> CreateCommand {
     CreateCommand::new("ping").description("Replies with Pong!")
 }
 
-pub async fn ping(ctx: &Context, command: &CommandInteraction) -> serenity::Result<()> {
+pub async fn ping_command(ctx: &Context, command: &CommandInteraction) -> serenity::Result<()> {
     command
         .create_response(
             &ctx.http,

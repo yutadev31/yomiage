@@ -1,14 +1,25 @@
-use std::env;
+use std::{collections::HashMap, env, sync::Arc};
 
 use serenity::{
-    all::{Command, EventHandler, GatewayIntents, Interaction, Ready},
+    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Ready},
     async_trait,
     prelude::*,
 };
+use songbird::SerenityInit;
 
-use crate::commands::ping::ping;
+const MY_SERVER: u64 = 1319360646994727003;
 
 mod commands;
+
+pub struct BotState {
+    pub text_channels: HashMap<GuildId, ChannelId>,
+}
+
+pub struct BotStateKey;
+
+impl TypeMapKey for BotStateKey {
+    type Value = Arc<RwLock<BotState>>;
+}
 
 struct Handler;
 
@@ -17,7 +28,20 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("Logged in as {}", ready.user.name);
 
-        Command::create_global_command(&ctx, commands::ping::register())
+        let guild_id = GuildId::new(MY_SERVER);
+
+        guild_id
+            .create_command(&ctx, commands::ping::register())
+            .await
+            .unwrap();
+
+        guild_id
+            .create_command(&ctx, commands::join::register())
+            .await
+            .unwrap();
+
+        guild_id
+            .create_command(&ctx, commands::leave::register())
             .await
             .unwrap();
     }
@@ -26,8 +50,18 @@ impl EventHandler for Handler {
         if let Interaction::Command(command) = interaction {
             match command.data.name.as_str() {
                 "ping" => {
-                    if let Err(err) = ping(&ctx, &command).await {
+                    if let Err(err) = commands::ping::ping_command(&ctx, &command).await {
                         eprintln!("Failed to execute /ping: {err}")
+                    }
+                }
+                "join" => {
+                    if let Err(err) = commands::join::join_command(&ctx, &command).await {
+                        eprintln!("Failed to execute /join: {err}")
+                    }
+                }
+                "leave" => {
+                    if let Err(err) = commands::leave::leave_command(&ctx, &command).await {
+                        eprintln!("Failed to execute /leave: {err}")
                     }
                 }
                 _ => {}
@@ -42,12 +76,23 @@ async fn main() {
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_VOICE_STATES;
 
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
+        .register_songbird()
         .await
         .expect("Err creating client");
+
+    {
+        let mut data = client.data.write().await;
+        data.insert::<BotStateKey>(Arc::new(RwLock::new(BotState {
+            text_channels: HashMap::new(),
+        })));
+    }
 
     if let Err(why) = client.start().await {
         println!("Client error: {why:?}");
