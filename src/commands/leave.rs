@@ -21,7 +21,7 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
 
     let state = bot_state(ctx).await;
 
-    if state.read().await.text_channels.get(&guild_id).is_none() {
+    if !state.read().await.playback.contains_key(&guild_id) {
         command
             .edit_response(
                 &ctx.http,
@@ -53,7 +53,9 @@ pub async fn leave_guild(ctx: &Context, guild_id: GuildId) -> anyhow::Result<()>
     manager.leave(guild_id).await?;
 
     let state = bot_state(ctx).await;
-    state.write().await.text_channels.remove(&guild_id);
+    if let Some(playback) = state.write().await.playback.remove(&guild_id) {
+        playback.task.abort();
+    }
 
     Ok(())
 }
@@ -72,13 +74,15 @@ pub async fn leave_all(data: &Arc<RwLock<TypeMap>>) {
             .expect("Bot state is not initialized")
             .clone()
     };
-    let guild_ids: Vec<_> = state.read().await.text_channels.keys().copied().collect();
+    let guild_ids: Vec<_> = state.read().await.playback.keys().copied().collect();
 
     for guild_id in guild_ids {
         if let Err(err) = manager.leave(guild_id).await {
             eprintln!("Failed to leave voice channel in guild {guild_id}: {err:#}");
             continue;
         }
-        state.write().await.text_channels.remove(&guild_id);
+        if let Some(playback) = state.write().await.playback.remove(&guild_id) {
+            playback.task.abort();
+        }
     }
 }

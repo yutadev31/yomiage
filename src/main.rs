@@ -6,15 +6,29 @@ use serenity::{
     prelude::*,
 };
 use songbird::SerenityInit;
+use tokio::{
+    sync::{Semaphore, mpsc},
+    task::AbortHandle,
+};
 
 const MY_SERVER: u64 = 1544917245472284774;
+pub(crate) const MESSAGE_QUEUE_CAPACITY: usize = 32;
+const MAX_CONCURRENT_SYNTHESIS: usize = 2;
 
+mod chunking;
 mod commands;
 mod voicevox;
 
 pub struct BotState {
-    pub text_channels: HashMap<GuildId, ChannelId>,
+    pub playback: HashMap<GuildId, GuildPlayback>,
     pub voicevox: voicevox::Voicevox,
+    pub synthesis_permits: Arc<Semaphore>,
+}
+
+pub struct GuildPlayback {
+    pub text_channel_id: ChannelId,
+    pub sender: mpsc::Sender<String>,
+    pub task: AbortHandle,
 }
 
 pub struct BotStateKey;
@@ -110,28 +124,21 @@ impl EventHandler for Handler {
 
         let state = bot_state(&ctx).await;
 
-        if Some(msg.channel_id) != state.read().await.text_channels.get(&guild_id).copied() {
-            return;
-        }
-
-        let manager = songbird::get(&ctx)
-            .await
-            .expect("Songbird is not registered");
-
-        let Some(call) = manager.get(guild_id) else {
-            return;
-        };
-
-        let voicevox = state.read().await.voicevox.clone();
-        let wav = match voicevox.synthesize(&msg.content).await {
-            Ok(wav) => wav,
-            Err(err) => {
-                eprintln!("Failed to synthesize message with VOICEVOX: {err:#}");
+        let sender = {
+            let state = state.read().await;
+            let Some(playback) = state.playback.get(&guild_id) else {
+                return;
+            };
+            if msg.channel_id != playback.text_channel_id {
                 return;
             }
+            playback.sender.clone()
         };
 
-        call.lock().await.enqueue_input(wav.into()).await;
+        if let Err(err) = sender.send(msg.content.clone()).await {
+            eprintln!("Failed to queue message for playback: {err}");
+            return;
+        }
     }
 
     async fn voice_state_update(
@@ -146,7 +153,7 @@ impl EventHandler for Handler {
 
         let state = bot_state(&ctx).await;
 
-        if !state.read().await.text_channels.contains_key(&guild_id) {
+        if !state.read().await.playback.contains_key(&guild_id) {
             return;
         }
 
@@ -204,8 +211,9 @@ async fn main() {
     {
         let mut data = client.data.write().await;
         data.insert::<BotStateKey>(Arc::new(RwLock::new(BotState {
-            text_channels: HashMap::new(),
+            playback: HashMap::new(),
             voicevox,
+            synthesis_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_SYNTHESIS)),
         })));
     }
 

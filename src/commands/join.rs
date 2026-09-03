@@ -1,8 +1,21 @@
-use serenity::all::{
-    ChannelId, CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId, UserId,
+use std::sync::Arc;
+
+use serenity::{
+    all::{
+        ChannelId, CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId,
+        UserId,
+    },
+    prelude::Mutex,
+};
+use songbird::Call;
+use tokio::{
+    sync::{Semaphore, mpsc},
+    task::AbortHandle,
 };
 
-use crate::bot_state;
+use crate::{
+    GuildPlayback, MESSAGE_QUEUE_CAPACITY, bot_state, chunking::split_text, voicevox::Voicevox,
+};
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("join").description("Replies with Pong!")
@@ -55,7 +68,10 @@ pub async fn join(
 
     let state = bot_state(ctx).await;
 
-    let voicevox = state.read().await.voicevox.clone();
+    let (voicevox, synthesis_permits) = {
+        let state = state.read().await;
+        (state.voicevox.clone(), state.synthesis_permits.clone())
+    };
     if let Err(err) = voicevox.check_connection().await {
         return Err(format!(
             "VOICEVOX Engineに接続できません。起動後にもう一度実行してください。\n`{err:#}`"
@@ -66,16 +82,60 @@ pub async fn join(
         .await
         .expect("Songbird is not registered");
 
-    manager
+    let call = manager
         .join(guild_id, channel_id)
         .await
         .map_err(|err| format!("ボイスチャンネルへの接続に失敗しました: {err:#}"))?;
 
-    state
-        .write()
-        .await
-        .text_channels
-        .insert(guild_id, text_channel_id);
+    let (sender, task) = start_playback_worker(voicevox, call, synthesis_permits);
+
+    let previous = state.write().await.playback.insert(
+        guild_id,
+        GuildPlayback {
+            text_channel_id,
+            sender,
+            task,
+        },
+    );
+    if let Some(previous) = previous {
+        previous.task.abort();
+    }
 
     Ok(())
+}
+
+fn start_playback_worker(
+    voicevox: Voicevox,
+    call: Arc<Mutex<Call>>,
+    synthesis_permits: Arc<Semaphore>,
+) -> (mpsc::Sender<String>, AbortHandle) {
+    let (sender, mut receiver) = mpsc::channel::<String>(MESSAGE_QUEUE_CAPACITY);
+    let task = tokio::spawn(async move {
+        while let Some(message) = receiver.recv().await {
+            for chunk in split_text(&message) {
+                if chunk.trim().is_empty() {
+                    continue;
+                }
+
+                let wav = {
+                    let _permit = synthesis_permits
+                        .acquire()
+                        .await
+                        .expect("synthesis semaphore must remain open");
+                    voicevox.synthesize(&chunk).await
+                };
+                let wav = match wav {
+                    Ok(wav) => wav,
+                    Err(err) => {
+                        eprintln!("Failed to synthesize VOICEVOX chunk: {err:#}");
+                        continue;
+                    }
+                };
+
+                call.lock().await.enqueue_input(wav.into()).await;
+            }
+        }
+    });
+
+    (sender, task.abort_handle())
 }
