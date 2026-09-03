@@ -53,9 +53,27 @@ impl EventHandler for Handler {
             return;
         }
 
+        if msg.content.trim_start().starts_with(';') {
+            return;
+        }
+
         let Some(guild_id) = msg.guild_id else {
             return;
         };
+
+        let bot_id = ctx.cache.current_user().id;
+        if msg.mentions.iter().any(|user| user.id == bot_id) {
+            let response =
+                match commands::join::join(&ctx, guild_id, msg.author.id, msg.channel_id).await {
+                    Ok(()) => "接続しました。".to_owned(),
+                    Err(message) => message,
+                };
+
+            if let Err(err) = msg.channel_id.say(&ctx.http, response).await {
+                eprintln!("Failed to respond to join mention: {err}");
+            }
+            return;
+        }
 
         let state = {
             let data = ctx.data.read().await;
