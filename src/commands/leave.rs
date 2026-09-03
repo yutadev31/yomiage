@@ -1,4 +1,10 @@
-use serenity::all::{CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId};
+use std::sync::Arc;
+
+use serenity::{
+    all::{CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId},
+    prelude::{RwLock, TypeMap},
+};
+use songbird::serenity::SongbirdKey;
 
 use crate::bot_state;
 
@@ -50,4 +56,29 @@ pub async fn leave_guild(ctx: &Context, guild_id: GuildId) -> anyhow::Result<()>
     state.write().await.text_channels.remove(&guild_id);
 
     Ok(())
+}
+
+/// Leaves every voice channel managed by the bot before the process stops.
+pub async fn leave_all(data: &Arc<RwLock<TypeMap>>) {
+    let manager = {
+        let data = data.read().await;
+        data.get::<SongbirdKey>()
+            .expect("Songbird is not registered")
+            .clone()
+    };
+    let state = {
+        let data = data.read().await;
+        data.get::<crate::BotStateKey>()
+            .expect("Bot state is not initialized")
+            .clone()
+    };
+    let guild_ids: Vec<_> = state.read().await.text_channels.keys().copied().collect();
+
+    for guild_id in guild_ids {
+        if let Err(err) = manager.leave(guild_id).await {
+            eprintln!("Failed to leave voice channel in guild {guild_id}: {err:#}");
+            continue;
+        }
+        state.write().await.text_channels.remove(&guild_id);
+    }
 }

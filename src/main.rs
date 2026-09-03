@@ -209,7 +209,22 @@ async fn main() {
         })));
     }
 
-    if let Err(why) = client.start().await {
-        println!("Client error: {why:?}");
+    let data = client.data.clone();
+    let shard_manager = client.shard_manager.clone();
+    tokio::select! {
+        result = client.start() => {
+            if let Err(err) = result {
+                eprintln!("Client error: {err:?}");
+            }
+        }
+        result = tokio::signal::ctrl_c() => {
+            if let Err(err) = result {
+                eprintln!("Failed to listen for Ctrl+C: {err}");
+            }
+
+            println!("Ctrl+C received; leaving voice channels...");
+            commands::leave::leave_all(&data).await;
+            shard_manager.shutdown_all().await;
+        }
     }
 }
