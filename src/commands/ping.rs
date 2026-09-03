@@ -4,7 +4,7 @@ use serenity::all::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("ping").description("Replies with Pong!")
+    CreateCommand::new("ping").description("Botの応答を確認します")
 }
 
 pub async fn ping_command(ctx: &Context, command: &CommandInteraction) -> serenity::Result<()> {

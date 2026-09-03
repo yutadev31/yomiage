@@ -9,7 +9,7 @@ use songbird::serenity::SongbirdKey;
 use crate::bot_state;
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("leave").description("Replies with Pong!")
+    CreateCommand::new("leave").description("ボイスチャンネルから切断します")
 }
 
 pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {

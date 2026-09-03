@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub fn register() -> CreateCommand {
-    CreateCommand::new("join").description("Replies with Pong!")
+    CreateCommand::new("join").description("ボイスチャンネルに接続して読み上げを開始します")
 }
 
 pub async fn join_command(ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
