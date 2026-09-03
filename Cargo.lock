@@ -4619,6 +4619,7 @@ dependencies = [
  "dotenvy",
  "reqwest",
  "serenity",
+ "sha2",
  "songbird",
  "symphonia",
  "tokio",
