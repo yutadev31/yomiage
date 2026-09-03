@@ -1,0 +1,23 @@
+services:
+  yomiage:
+    build:
+      context: .
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?Set DISCORD_TOKEN in .env}
+      VOICEVOX_URL: http://voicevox:50021
+      VOICEVOX_SPEAKER: ${VOICEVOX_SPEAKER:-3}
+      VOICEVOX_DISK_CACHE_DIR: /app/.voicevox-cache
+    depends_on:
+      voicevox:
+        condition: service_started
+    volumes:
+      - voicevox-cache:/app/.voicevox-cache
+    init: true
+    restart: unless-stopped
+
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+    restart: unless-stopped
+
+volumes:
+  voicevox-cache:
