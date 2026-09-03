@@ -13,26 +13,21 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
         return Ok(());
     };
 
-    let channel_id = {
-        let guild = ctx.cache.guild(guild_id).unwrap();
-
-        guild
-            .voice_states
-            .get(&command.user.id)
-            .and_then(|state| state.channel_id)
+    let state = {
+        let data = ctx.data.read().await;
+        data.get::<BotStateKey>().unwrap().clone()
     };
 
-    let Some(channel_id) = channel_id else {
+    if state.read().await.text_channels.get(&guild_id).is_none() {
         command
             .edit_response(
                 &ctx.http,
-                EditInteractionResponse::new()
-                    .content("ボイスチャンネルに接続して実行してください。"),
+                EditInteractionResponse::new().content("ボイスチャンネルに接続していません。"),
             )
             .await?;
 
         return Ok(());
-    };
+    }
 
     let manager = songbird::get(&ctx)
         .await
@@ -40,16 +35,7 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
 
     manager.leave(guild_id).await?;
 
-    let state = {
-        let data = ctx.data.read().await;
-        data.get::<BotStateKey>().unwrap().clone()
-    };
-
-    state
-        .write()
-        .await
-        .text_channels
-        .insert(guild_id, channel_id);
+    state.write().await.text_channels.remove(&guild_id);
 
     command
         .edit_response(

@@ -34,6 +34,24 @@ pub async fn join_command(ctx: &Context, command: &CommandInteraction) -> anyhow
         return Ok(());
     };
 
+    let state = {
+        let data = ctx.data.read().await;
+        data.get::<BotStateKey>().unwrap().clone()
+    };
+
+    let voicevox = state.read().await.voicevox.clone();
+    if let Err(err) = voicevox.check_connection().await {
+        command
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new().content(format!(
+                    "VOICEVOX Engineに接続できません。起動後にもう一度実行してください。\n`{err:#}`"
+                )),
+            )
+            .await?;
+        return Ok(());
+    }
+
     let manager = songbird::get(&ctx)
         .await
         .expect("Songbird is not registered");
@@ -49,7 +67,7 @@ pub async fn join_command(ctx: &Context, command: &CommandInteraction) -> anyhow
         .write()
         .await
         .text_channels
-        .insert(guild_id, channel_id);
+        .insert(guild_id, command.channel_id);
 
     command
         .edit_response(

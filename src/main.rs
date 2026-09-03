@@ -7,12 +7,14 @@ use serenity::{
 };
 use songbird::SerenityInit;
 
-const MY_SERVER: u64 = 1319360646994727003;
+const MY_SERVER: u64 = 1544917245472284774;
 
 mod commands;
+mod voicevox;
 
 pub struct BotState {
     pub text_channels: HashMap<GuildId, ChannelId>,
+    pub voicevox: voicevox::Voicevox,
 }
 
 pub struct BotStateKey;
@@ -72,7 +74,16 @@ impl EventHandler for Handler {
             return;
         };
 
-        println!("{}", msg.content);
+        let voicevox = state.read().await.voicevox.clone();
+        let wav = match voicevox.synthesize(&msg.content).await {
+            Ok(wav) => wav,
+            Err(err) => {
+                eprintln!("Failed to synthesize message with VOICEVOX: {err:#}");
+                return;
+            }
+        };
+
+        call.lock().await.enqueue_input(wav.into()).await;
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -104,6 +115,7 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+    let voicevox = voicevox::Voicevox::from_env().expect("Invalid VOICEVOX configuration");
 
     let intents = GatewayIntents::GUILDS
         | GatewayIntents::GUILD_MESSAGES
@@ -120,6 +132,7 @@ async fn main() {
         let mut data = client.data.write().await;
         data.insert::<BotStateKey>(Arc::new(RwLock::new(BotState {
             text_channels: HashMap::new(),
+            voicevox,
         })));
     }
 
