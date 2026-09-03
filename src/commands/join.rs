@@ -14,7 +14,8 @@ use tokio::{
 };
 
 use crate::{
-    GuildPlayback, MESSAGE_QUEUE_CAPACITY, bot_state, chunking::split_text, voicevox::Voicevox,
+    GuildPlayback, MESSAGE_QUEUE_CAPACITY, SpeechRequest, bot_state, chunking::split_text,
+    voicevox::Voicevox,
 };
 
 pub fn register() -> CreateCommand {
@@ -108,11 +109,11 @@ fn start_playback_worker(
     voicevox: Voicevox,
     call: Arc<Mutex<Call>>,
     synthesis_permits: Arc<Semaphore>,
-) -> (mpsc::Sender<String>, AbortHandle) {
-    let (sender, mut receiver) = mpsc::channel::<String>(MESSAGE_QUEUE_CAPACITY);
+) -> (mpsc::Sender<SpeechRequest>, AbortHandle) {
+    let (sender, mut receiver) = mpsc::channel::<SpeechRequest>(MESSAGE_QUEUE_CAPACITY);
     let task = tokio::spawn(async move {
-        while let Some(message) = receiver.recv().await {
-            for chunk in split_text(&message) {
+        while let Some(request) = receiver.recv().await {
+            for chunk in split_text(&request.text) {
                 if chunk.trim().is_empty() {
                     continue;
                 }
@@ -122,7 +123,13 @@ fn start_playback_worker(
                         .acquire()
                         .await
                         .expect("synthesis semaphore must remain open");
-                    voicevox.synthesize(&chunk).await
+                    voicevox
+                        .synthesize_with_settings(
+                            &chunk,
+                            request.settings.speaker,
+                            request.settings.speed,
+                        )
+                        .await
                 };
                 let wav = match wav {
                     Ok(wav) => wav,

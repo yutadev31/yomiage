@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, sync::Arc};
 
 use serenity::{
-    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Message, Ready},
+    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Message, Ready, UserId},
     async_trait,
     prelude::*,
 };
@@ -23,12 +23,24 @@ pub struct BotState {
     pub playback: HashMap<GuildId, GuildPlayback>,
     pub voicevox: voicevox::Voicevox,
     pub synthesis_permits: Arc<Semaphore>,
+    pub user_settings: HashMap<UserId, SpeechSettings>,
 }
 
 pub struct GuildPlayback {
     pub text_channel_id: ChannelId,
-    pub sender: mpsc::Sender<String>,
+    pub sender: mpsc::Sender<SpeechRequest>,
     pub task: AbortHandle,
+}
+
+#[derive(Clone, Default)]
+pub struct SpeechSettings {
+    pub speaker: Option<u32>,
+    pub speed: Option<f64>,
+}
+
+pub struct SpeechRequest {
+    pub text: String,
+    pub settings: SpeechSettings,
 }
 
 pub struct BotStateKey;
@@ -93,6 +105,16 @@ impl EventHandler for Handler {
             .create_command(&ctx, commands::leave::register())
             .await
             .unwrap();
+
+        guild_id
+            .create_command(&ctx, commands::settings::register_speed())
+            .await
+            .unwrap();
+
+        guild_id
+            .create_command(&ctx, commands::settings::register_speaker())
+            .await
+            .unwrap();
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
@@ -124,7 +146,7 @@ impl EventHandler for Handler {
 
         let state = bot_state(&ctx).await;
 
-        let sender = {
+        let (sender, settings) = {
             let state = state.read().await;
             let Some(playback) = state.playback.get(&guild_id) else {
                 return;
@@ -132,10 +154,23 @@ impl EventHandler for Handler {
             if msg.channel_id != playback.text_channel_id {
                 return;
             }
-            playback.sender.clone()
+            (
+                playback.sender.clone(),
+                state
+                    .user_settings
+                    .get(&msg.author.id)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
         };
 
-        if let Err(err) = sender.send(msg.content.clone()).await {
+        if let Err(err) = sender
+            .send(SpeechRequest {
+                text: msg.content.clone(),
+                settings,
+            })
+            .await
+        {
             eprintln!("Failed to queue message for playback: {err}");
             return;
         }
@@ -184,6 +219,16 @@ impl EventHandler for Handler {
                         eprintln!("Failed to execute /leave: {err}")
                     }
                 }
+                "speed" => {
+                    if let Err(err) = commands::settings::speed_command(&ctx, &command).await {
+                        eprintln!("Failed to execute /speed: {err}")
+                    }
+                }
+                "speaker" => {
+                    if let Err(err) = commands::settings::speaker_command(&ctx, &command).await {
+                        eprintln!("Failed to execute /speaker: {err}")
+                    }
+                }
                 _ => {}
             }
         }
@@ -214,6 +259,7 @@ async fn main() {
             playback: HashMap::new(),
             voicevox,
             synthesis_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_SYNTHESIS)),
+            user_settings: HashMap::new(),
         })));
     }
 

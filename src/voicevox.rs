@@ -16,6 +16,7 @@ static CACHE_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:50021";
 const DEFAULT_SPEAKER: u32 = 3;
+const DEFAULT_SPEED: f64 = 1.0;
 const DEFAULT_CACHE_ENTRIES: usize = 128;
 const KIBIBYTE: usize = 1024;
 const MEBIBYTE: usize = KIBIBYTE * KIBIBYTE;
@@ -120,6 +121,18 @@ impl Voicevox {
 
     /// Converts text to a WAV file through VOICEVOX Engine.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
+        self.synthesize_with_settings(text, None, None).await
+    }
+
+    /// Converts text using an optional per-user speaker and speed setting.
+    pub async fn synthesize_with_settings(
+        &self,
+        text: &str,
+        speaker: Option<u32>,
+        speed: Option<f64>,
+    ) -> Result<Vec<u8>> {
+        let speaker = speaker.unwrap_or(self.speaker);
+        let speed = speed.unwrap_or(DEFAULT_SPEED);
         if let Some(wav) = self
             .cache
             .lock()
@@ -129,7 +142,7 @@ impl Voicevox {
             return Ok(wav);
         }
 
-        let cache_key = self.cache_key(text);
+        let cache_key = self.cache_key(text, speaker, speed);
         match self.disk_cache.get(&cache_key).await {
             Ok(Some(wav)) => {
                 self.cache
@@ -142,7 +155,7 @@ impl Voicevox {
             Err(err) => eprintln!("Failed to read VOICEVOX disk cache: {err:#}"),
         }
 
-        let wav = self.synthesize_uncached(text).await?;
+        let wav = self.synthesize_uncached(text, speaker, speed).await?;
         self.cache
             .lock()
             .expect("audio cache lock poisoned")
@@ -153,32 +166,39 @@ impl Voicevox {
         Ok(wav)
     }
 
-    fn cache_key(&self, text: &str) -> String {
+    fn cache_key(&self, text: &str, speaker: u32, speed: f64) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.base_url.as_bytes());
         hasher.update([CACHE_KEY_SEPARATOR]);
-        hasher.update(self.speaker.to_le_bytes());
+        hasher.update(speaker.to_le_bytes());
+        hasher.update([CACHE_KEY_SEPARATOR]);
+        hasher.update(speed.to_le_bytes());
         hasher.update([CACHE_KEY_SEPARATOR]);
         hasher.update(text.as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
-    async fn synthesize_uncached(&self, text: &str) -> Result<Vec<u8>> {
+    async fn synthesize_uncached(&self, text: &str, speaker: u32, speed: f64) -> Result<Vec<u8>> {
         let query_url = format!("{}/audio_query", self.base_url);
         let audio_query = self
             .client
             .post(query_url)
-            .query(&[("text", text), ("speaker", &self.speaker.to_string())])
+            .query(&[("text", text), ("speaker", &speaker.to_string())])
             .send()
             .await
             .context("VOICEVOX audio_query request failed")?;
-        let audio_query = response_bytes(audio_query, "audio_query").await?;
+        let mut audio_query: serde_json::Value =
+            serde_json::from_slice(&response_bytes(audio_query, "audio_query").await?)
+                .context("failed to parse VOICEVOX audio_query response")?;
+        audio_query["speedScale"] = serde_json::Value::from(speed);
+        let audio_query =
+            serde_json::to_vec(&audio_query).context("failed to serialize VOICEVOX audio_query")?;
 
         let synthesis_url = format!("{}/synthesis", self.base_url);
         let wav = self
             .client
             .post(synthesis_url)
-            .query(&[("speaker", self.speaker)])
+            .query(&[("speaker", speaker)])
             .header("content-type", "application/json")
             .body(audio_query)
             .send()
@@ -394,7 +414,7 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use super::{AudioCache, DiskCache};
+    use super::{AudioCache, DiskCache, Voicevox};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -432,6 +452,14 @@ mod tests {
         cache.insert("large", &[1, 2, 3]);
 
         assert_eq!(cache.get("large"), None);
+    }
+
+    #[test]
+    fn cache_keys_include_speaker_and_speed() {
+        let voicevox = Voicevox::new("http://127.0.0.1:50021", 3).unwrap();
+        let base = voicevox.cache_key("同じ文章", 3, 1.0);
+        assert_ne!(base, voicevox.cache_key("同じ文章", 4, 1.0));
+        assert_ne!(base, voicevox.cache_key("同じ文章", 3, 1.2));
     }
 
     #[tokio::test]

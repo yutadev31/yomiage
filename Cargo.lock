@@ -4618,6 +4618,7 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "reqwest",
+ "serde_json",
  "serenity",
  "sha2",
  "songbird",
