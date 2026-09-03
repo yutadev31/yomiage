@@ -1,7 +1,10 @@
 use std::{collections::HashMap, env, sync::Arc};
 
 use serenity::{
-    all::{ChannelId, EventHandler, GatewayIntents, GuildId, Interaction, Message, Ready, UserId},
+    all::{
+        ChannelId, Command, EventHandler, GatewayIntents, GuildId, Interaction, Message, Ready,
+        UserId,
+    },
     async_trait,
     prelude::*,
 };
@@ -11,7 +14,6 @@ use tokio::{
     task::AbortHandle,
 };
 
-const MY_SERVER: u64 = 1544917245472284774;
 pub(crate) const MESSAGE_QUEUE_CAPACITY: usize = 32;
 const MAX_CONCURRENT_SYNTHESIS: usize = 2;
 
@@ -57,7 +59,10 @@ pub async fn bot_state(ctx: &Context) -> Arc<RwLock<BotState>> {
         .clone()
 }
 
-struct Handler;
+struct Handler {
+    #[cfg(debug_assertions)]
+    guild_id: GuildId,
+}
 
 fn bot_is_alone(ctx: &Context, guild_id: GuildId) -> bool {
     let bot_id = ctx.cache.current_user().id;
@@ -90,37 +95,21 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("Logged in as {}", ready.user.name);
 
-        let guild_id = GuildId::new(MY_SERVER);
+        if let Err(err) = Command::set_global_commands(&ctx.http, commands::register_all()).await {
+            eprintln!("Failed to register global commands: {err}");
+        }
 
-        guild_id
-            .create_command(&ctx, commands::ping::register())
-            .await
-            .unwrap();
-
-        guild_id
-            .create_command(&ctx, commands::join::register())
-            .await
-            .unwrap();
-
-        guild_id
-            .create_command(&ctx, commands::leave::register())
-            .await
-            .unwrap();
-
-        guild_id
-            .create_command(&ctx, commands::settings::register_speed())
-            .await
-            .unwrap();
-
-        guild_id
-            .create_command(&ctx, commands::settings::register_speaker())
-            .await
-            .unwrap();
-
-        guild_id
-            .create_command(&ctx, commands::skip::register())
-            .await
-            .unwrap();
+        #[cfg(debug_assertions)]
+        {
+            // Guild commands update immediately, which is useful while developing.
+            if let Err(err) = self
+                .guild_id
+                .set_commands(&ctx.http, commands::register_all())
+                .await
+            {
+                eprintln!("Failed to register guild commands: {err}");
+            }
+        }
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
@@ -251,6 +240,11 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+    #[cfg(debug_assertions)]
+    let guild_id = env::var("DISCORD_GUILD_ID")
+        .expect("Expected DISCORD_GUILD_ID in the environment")
+        .parse()
+        .expect("DISCORD_GUILD_ID must be an unsigned integer");
     let voicevox = voicevox::Voicevox::from_env().expect("Invalid VOICEVOX configuration");
 
     let intents = GatewayIntents::GUILDS
@@ -259,7 +253,10 @@ async fn main() {
         | GatewayIntents::GUILD_VOICE_STATES;
 
     let mut client = Client::builder(&token, intents)
-        .event_handler(Handler)
+        .event_handler(Handler {
+            #[cfg(debug_assertions)]
+            guild_id: GuildId::new(guild_id),
+        })
         .register_songbird()
         .await
         .expect("Err creating client");

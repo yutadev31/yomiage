@@ -133,22 +133,22 @@ impl Voicevox {
     ) -> Result<Vec<u8>> {
         let speaker = speaker.unwrap_or(self.speaker);
         let speed = speed.unwrap_or(DEFAULT_SPEED);
+        let cache_key = self.cache_key(text, speaker, speed);
         if let Some(wav) = self
             .cache
             .lock()
             .expect("audio cache lock poisoned")
-            .get(text)
+            .get(&cache_key)
         {
             return Ok(wav);
         }
 
-        let cache_key = self.cache_key(text, speaker, speed);
         match self.disk_cache.get(&cache_key).await {
             Ok(Some(wav)) => {
                 self.cache
                     .lock()
                     .expect("audio cache lock poisoned")
-                    .insert(text, &wav);
+                    .insert(&cache_key, &wav);
                 return Ok(wav);
             }
             Ok(None) => {}
@@ -159,10 +159,17 @@ impl Voicevox {
         self.cache
             .lock()
             .expect("audio cache lock poisoned")
-            .insert(text, &wav);
-        if let Err(err) = self.disk_cache.insert(&cache_key, &wav).await {
-            eprintln!("Failed to write VOICEVOX disk cache: {err:#}");
-        }
+            .insert(&cache_key, &wav);
+
+        // Cache maintenance can scan the whole cache directory.  It must not
+        // delay enqueueing freshly synthesized audio for playback.
+        let disk_cache = self.disk_cache.clone();
+        let wav_for_cache = wav.clone();
+        tokio::spawn(async move {
+            if let Err(err) = disk_cache.insert(&cache_key, &wav_for_cache).await {
+                eprintln!("Failed to write VOICEVOX disk cache: {err:#}");
+            }
+        });
         Ok(wav)
     }
 

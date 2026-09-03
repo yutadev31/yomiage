@@ -1,6 +1,6 @@
 use serenity::all::{
     CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
-    CreateCommandOption, EditInteractionResponse,
+    CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
 use crate::bot_state;
@@ -29,8 +29,6 @@ pub fn register_speaker() -> CreateCommand {
 }
 
 pub async fn speed_command(ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
-    command.defer(&ctx.http).await?;
-
     let Some(CommandDataOptionValue::Number(speed)) =
         command.data.options.first().map(|option| &option.value)
     else {
@@ -55,8 +53,6 @@ pub async fn speed_command(ctx: &Context, command: &CommandInteraction) -> anyho
 }
 
 pub async fn speaker_command(ctx: &Context, command: &CommandInteraction) -> anyhow::Result<()> {
-    command.defer(&ctx.http).await?;
-
     let Some(CommandDataOptionValue::Integer(speaker)) =
         command.data.options.first().map(|option| &option.value)
     else {
@@ -90,7 +86,12 @@ async fn respond(
     content: impl Into<String>,
 ) -> anyhow::Result<()> {
     command
-        .edit_response(&ctx.http, EditInteractionResponse::new().content(content))
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new().content(content),
+            ),
+        )
         .await?;
     Ok(())
 }
