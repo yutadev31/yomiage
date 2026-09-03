@@ -104,6 +104,67 @@ impl EventHandler for Handler {
         call.lock().await.enqueue_input(wav.into()).await;
     }
 
+    async fn voice_state_update(
+        &self,
+        ctx: Context,
+        _old: Option<serenity::all::VoiceState>,
+        new: serenity::all::VoiceState,
+    ) {
+        let Some(guild_id) = new.guild_id else {
+            return;
+        };
+
+        let state = {
+            let data = ctx.data.read().await;
+            data.get::<BotStateKey>().unwrap().clone()
+        };
+
+        if !state.read().await.text_channels.contains_key(&guild_id) {
+            return;
+        }
+
+        let bot_id = ctx.cache.current_user().id;
+        let has_human = {
+            let Some(guild) = ctx.cache.guild(guild_id) else {
+                return;
+            };
+            let Some(bot_channel_id) = guild
+                .voice_states
+                .get(&bot_id)
+                .and_then(|voice_state| voice_state.channel_id)
+            else {
+                return;
+            };
+
+            guild.voice_states.values().any(|voice_state| {
+                voice_state.channel_id == Some(bot_channel_id)
+                    && voice_state.user_id != bot_id
+                    && voice_state
+                        .member
+                        .as_ref()
+                        .map(|member| !member.user.bot)
+                        // If member data is not cached, keep the call alive rather than
+                        // accidentally disconnecting while someone is present.
+                        .unwrap_or(true)
+            })
+        };
+
+        if has_human {
+            return;
+        }
+
+        let manager = songbird::get(&ctx)
+            .await
+            .expect("Songbird is not registered");
+        if let Err(err) = manager.leave(guild_id).await {
+            eprintln!("Failed to leave empty voice channel: {err:#}");
+            return;
+        }
+
+        state.write().await.text_channels.remove(&guild_id);
+        println!("Left empty voice channel in guild {guild_id}");
+    }
+
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
             match command.data.name.as_str() {
