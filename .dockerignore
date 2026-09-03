@@ -1,0 +1,8 @@
+.git
+.env
+.voicevox-cache
+target
+.vscode
+Dockerfile
+docker-compose.yml
+README.md
