@@ -1,6 +1,6 @@
-use serenity::all::{CommandInteraction, Context, CreateCommand, EditInteractionResponse};
+use serenity::all::{CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId};
 
-use crate::BotStateKey;
+use crate::bot_state;
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("leave").description("Replies with Pong!")
@@ -13,10 +13,7 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
         return Ok(());
     };
 
-    let state = {
-        let data = ctx.data.read().await;
-        data.get::<BotStateKey>().unwrap().clone()
-    };
+    let state = bot_state(ctx).await;
 
     if state.read().await.text_channels.get(&guild_id).is_none() {
         command
@@ -29,13 +26,7 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
         return Ok(());
     }
 
-    let manager = songbird::get(&ctx)
-        .await
-        .expect("Songbird is not registered");
-
-    manager.leave(guild_id).await?;
-
-    state.write().await.text_channels.remove(&guild_id);
+    leave_guild(ctx, guild_id).await?;
 
     command
         .edit_response(
@@ -43,6 +34,20 @@ pub async fn leave_command(ctx: &Context, command: &CommandInteraction) -> anyho
             EditInteractionResponse::new().content("切断しました。"),
         )
         .await?;
+
+    Ok(())
+}
+
+/// Leaves the guild's voice channel and clears its text-channel association.
+pub async fn leave_guild(ctx: &Context, guild_id: GuildId) -> anyhow::Result<()> {
+    let manager = songbird::get(ctx)
+        .await
+        .expect("Songbird is not registered");
+
+    manager.leave(guild_id).await?;
+
+    let state = bot_state(ctx).await;
+    state.write().await.text_channels.remove(&guild_id);
 
     Ok(())
 }

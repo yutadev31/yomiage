@@ -23,7 +23,40 @@ impl TypeMapKey for BotStateKey {
     type Value = Arc<RwLock<BotState>>;
 }
 
+pub async fn bot_state(ctx: &Context) -> Arc<RwLock<BotState>> {
+    let data = ctx.data.read().await;
+    data.get::<BotStateKey>()
+        .expect("Bot state is not initialized")
+        .clone()
+}
+
 struct Handler;
+
+fn bot_is_alone(ctx: &Context, guild_id: GuildId) -> bool {
+    let bot_id = ctx.cache.current_user().id;
+    let Some(guild) = ctx.cache.guild(guild_id) else {
+        return false;
+    };
+    let Some(bot_channel_id) = guild
+        .voice_states
+        .get(&bot_id)
+        .and_then(|voice_state| voice_state.channel_id)
+    else {
+        return false;
+    };
+
+    !guild.voice_states.values().any(|voice_state| {
+        voice_state.channel_id == Some(bot_channel_id)
+            && voice_state.user_id != bot_id
+            && voice_state
+                .member
+                .as_ref()
+                .map(|member| !member.user.bot)
+                // If member data is not cached, keep the call alive rather than
+                // accidentally disconnecting while someone is present.
+                .unwrap_or(true)
+    })
+}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -75,10 +108,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let state = {
-            let data = ctx.data.read().await;
-            data.get::<BotStateKey>().unwrap().clone()
-        };
+        let state = bot_state(&ctx).await;
 
         if Some(msg.channel_id) != state.read().await.text_channels.get(&guild_id).copied() {
             return;
@@ -114,55 +144,19 @@ impl EventHandler for Handler {
             return;
         };
 
-        let state = {
-            let data = ctx.data.read().await;
-            data.get::<BotStateKey>().unwrap().clone()
-        };
+        let state = bot_state(&ctx).await;
 
         if !state.read().await.text_channels.contains_key(&guild_id) {
             return;
         }
 
-        let bot_id = ctx.cache.current_user().id;
-        let has_human = {
-            let Some(guild) = ctx.cache.guild(guild_id) else {
-                return;
-            };
-            let Some(bot_channel_id) = guild
-                .voice_states
-                .get(&bot_id)
-                .and_then(|voice_state| voice_state.channel_id)
-            else {
-                return;
-            };
-
-            guild.voice_states.values().any(|voice_state| {
-                voice_state.channel_id == Some(bot_channel_id)
-                    && voice_state.user_id != bot_id
-                    && voice_state
-                        .member
-                        .as_ref()
-                        .map(|member| !member.user.bot)
-                        // If member data is not cached, keep the call alive rather than
-                        // accidentally disconnecting while someone is present.
-                        .unwrap_or(true)
-            })
-        };
-
-        if has_human {
+        if !bot_is_alone(&ctx, guild_id) {
             return;
         }
 
-        let manager = songbird::get(&ctx)
-            .await
-            .expect("Songbird is not registered");
-        if let Err(err) = manager.leave(guild_id).await {
+        if let Err(err) = commands::leave::leave_guild(&ctx, guild_id).await {
             eprintln!("Failed to leave empty voice channel: {err:#}");
-            return;
         }
-
-        state.write().await.text_channels.remove(&guild_id);
-        println!("Left empty voice channel in guild {guild_id}");
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {

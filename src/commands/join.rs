@@ -2,7 +2,7 @@ use serenity::all::{
     ChannelId, CommandInteraction, Context, CreateCommand, EditInteractionResponse, GuildId, UserId,
 };
 
-use crate::BotStateKey;
+use crate::bot_state;
 
 pub fn register() -> CreateCommand {
     CreateCommand::new("join").description("Replies with Pong!")
@@ -53,10 +53,7 @@ pub async fn join(
         })
         .ok_or_else(|| "ボイスチャンネルに接続した状態で実行してください。".to_owned())?;
 
-    let state = {
-        let data = ctx.data.read().await;
-        data.get::<BotStateKey>().unwrap().clone()
-    };
+    let state = bot_state(ctx).await;
 
     let voicevox = state.read().await.voicevox.clone();
     if let Err(err) = voicevox.check_connection().await {
