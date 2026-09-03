@@ -89,6 +89,12 @@ pub async fn join(
         .await
         .map_err(|err| format!("ボイスチャンネルへの接続に失敗しました: {err:#}"))?;
 
+    call.lock()
+        .await
+        .deafen(true)
+        .await
+        .map_err(|err| format!("スピーカーミュートの設定に失敗しました: {err:#}"))?;
+
     let (sender, skip_sender, task) = start_playback_worker(voicevox, call, synthesis_permits);
 
     let previous = state.write().await.playback.insert(
