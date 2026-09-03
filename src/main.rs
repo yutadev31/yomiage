@@ -7,7 +7,7 @@ use serenity::{
 };
 use songbird::SerenityInit;
 use tokio::{
-    sync::{Semaphore, mpsc},
+    sync::{Semaphore, mpsc, watch},
     task::AbortHandle,
 };
 
@@ -29,6 +29,7 @@ pub struct BotState {
 pub struct GuildPlayback {
     pub text_channel_id: ChannelId,
     pub sender: mpsc::Sender<SpeechRequest>,
+    pub skip_sender: watch::Sender<u64>,
     pub task: AbortHandle,
 }
 
@@ -113,6 +114,11 @@ impl EventHandler for Handler {
 
         guild_id
             .create_command(&ctx, commands::settings::register_speaker())
+            .await
+            .unwrap();
+
+        guild_id
+            .create_command(&ctx, commands::skip::register())
             .await
             .unwrap();
     }
@@ -227,6 +233,11 @@ impl EventHandler for Handler {
                 "speaker" => {
                     if let Err(err) = commands::settings::speaker_command(&ctx, &command).await {
                         eprintln!("Failed to execute /speaker: {err}")
+                    }
+                }
+                "skip" => {
+                    if let Err(err) = commands::skip::skip_command(&ctx, &command).await {
+                        eprintln!("Failed to execute /skip: {err}")
                     }
                 }
                 _ => {}
